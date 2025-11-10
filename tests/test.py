@@ -1,4 +1,3 @@
-# tests/test.py
 import unittest
 import unittest.mock as mock
 from pathlib import Path
@@ -152,6 +151,10 @@ class TestShell(unittest.TestCase):
 
     def test_undo_no_action(self):
         CmdHandlers.undo(self.shell, [])
+
+    def test_touch_missing_args(self):
+        with self.assertRaises(ValueError):
+            CmdHandlers.touch(self.shell, [])
 
     def test_exit_command(self):
         with self.assertRaises(SystemExit):

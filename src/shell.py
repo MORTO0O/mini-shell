@@ -11,6 +11,9 @@ from functools import partial
 from .constants import LOG_FILE, HIST_FILE, COUNTER_FILE, TRASH_DIR
 
 class Shell:
+    """
+    Инициализация шелла.
+    """
     def __init__(self):
         self.current_dir = pathlib.Path.cwd()
         self.trash_dir = pathlib.Path.home() / TRASH_DIR
@@ -56,6 +59,9 @@ class Shell:
         }
 
     def _setup_logging(self):
+        """
+         Логгирование в файл.
+        """
         logging.basicConfig(
             filename=self.log_file,
             level=logging.INFO,
@@ -64,6 +70,9 @@ class Shell:
         )
 
     def run(self):
+        """
+        Запуск цикла мини-шелла.
+        """
         print("Mini-shell started. Type 'exit' to quit.")
         while True:
             try:
@@ -101,6 +110,9 @@ class Shell:
 class CmdHandlers:
     @staticmethod
     def ls(shell, args):
+        """
+        Вывод списка всех файлов и директорий в текущей/указанной директории.
+        """
         long_format = False
         target_args = []
         for a in args:
@@ -135,6 +147,9 @@ class CmdHandlers:
 
     @staticmethod
     def cd(shell, args):
+        """
+        Переход из текущей директории в указанную.
+        """
         if not args:
             new_dir = pathlib.Path.home()
         else:
@@ -154,6 +169,9 @@ class CmdHandlers:
 
     @staticmethod
     def cat(shell, args):
+        """
+        Вывод содержимого файла.
+        """
         if not args:
             raise ValueError("cat: missing file operand")
         file_path = shell.current_dir / args[0]
@@ -165,6 +183,9 @@ class CmdHandlers:
 
     @staticmethod
     def cp(shell, args):
+        """
+        Копирование файла или директории (поддержка рекурсивного копирования).
+        """
         recursive = False
         if args and args[0] == "-r":
             recursive = True
@@ -188,6 +209,9 @@ class CmdHandlers:
 
     @staticmethod
     def mv(shell, args):
+        """
+        Перемещение или переименовывает файл/директорию.
+        """
         if len(args) != 2:
             raise ValueError("mv: missing source or destination")
         src = shell.current_dir / args[0]
@@ -206,6 +230,9 @@ class CmdHandlers:
 
     @staticmethod
     def rm(shell, args):
+        """
+        Удаление файла или директории (поддержка рекурсивного удаления).
+        """
         recursive = False
         if args and args[0] == "-r":
             recursive = True
@@ -238,6 +265,9 @@ class CmdHandlers:
 
     @staticmethod
     def grep(shell, args):
+        """
+        Поиск строк по шаблону в файле.
+        """
         recursive = False
         ignore_case = False
         while args and args[0].startswith("-"):
@@ -278,6 +308,9 @@ class CmdHandlers:
 
     @staticmethod
     def history(shell, args):
+        """
+        Выводит историю действий пользователя.
+        """
         n = int(args[0]) if args else None
         if shell.hist_file.exists():
             with open(shell.hist_file, "r", encoding="utf-8") as f:
@@ -305,6 +338,9 @@ class CmdHandlers:
         return None
     @staticmethod
     def touch(shell, args):
+        """
+        Создание файла.
+        """
         if not args:
             raise ValueError("touch: missing file operand")
         for arg in args:
@@ -316,4 +352,7 @@ class CmdHandlers:
         return None
     @staticmethod
     def exit_cmd(shell, args):
+        """
+        Завершает работу шелла.
+        """
         raise SystemExit
