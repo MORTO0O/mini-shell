@@ -8,7 +8,7 @@ import re
 import stat
 from datetime import datetime
 from functools import partial
-from .constants import LOG_FILE, HIST_FILE, COUNTER_FILE, TRASH_DIR
+from constants import LOG_FILE, HIST_FILE, COUNTER_FILE, TRASH_DIR
 
 class Shell:
     """
@@ -309,8 +309,17 @@ class CmdHandlers:
     @staticmethod
     def history(shell, args):
         """
-        Выводит историю действий пользователя.
+        Выводит истории последних команд. Если аргумент --clear, очищает историю.
         """
+        if args and args[0] == "--clear":
+            if shell.hist_file.exists():
+                open(shell.hist_file, "w").close()
+            if shell.counter_file.exists():
+                open(shell.counter_file, "w").close()
+            shell.global_counter = 0
+            print("History cleared.")
+            return None
+
         n = int(args[0]) if args else None
         if shell.hist_file.exists():
             with open(shell.hist_file, "r", encoding="utf-8") as f:
@@ -323,6 +332,9 @@ class CmdHandlers:
 
     @staticmethod
     def undo(shell, args):
+        """
+        Отменяет последнюю операцию cp, mv, rm или touch.
+        """
         if shell.last_undo:
             shell.last_undo()
             if shell.hist_file.exists():
@@ -336,6 +348,7 @@ class CmdHandlers:
         else:
             print("No action to undo")
         return None
+
     @staticmethod
     def touch(shell, args):
         """
@@ -350,6 +363,23 @@ class CmdHandlers:
             else:
                 file_path.touch()
         return None
+
+    @staticmethod
+    def mkdir(shell, args):
+        """
+        Создает новой директории.
+        """
+        if not args:
+            raise ValueError("mkdir: missing operand")
+        for arg in args:
+            dir_path = shell.current_dir / arg
+            if dir_path.exists():
+                raise FileExistsError(f"mkdir: directory '{arg}' already exists")
+            dir_path.mkdir()
+            shell.last_undo = partial(shutil.rmtree, dir_path) if dir_path.is_dir() and not list(
+                dir_path.iterdir()) else None
+        return None
+
     @staticmethod
     def exit_cmd(shell, args):
         """

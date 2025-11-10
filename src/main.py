@@ -1,4 +1,4 @@
-from src.shell import Shell
+from shell import Shell
 
 def main():
     shell = Shell()
