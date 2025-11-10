@@ -8,7 +8,7 @@ import re
 import stat
 from datetime import datetime
 from functools import partial
-from .constants import LOG_FILE, HIST_FILE, COUNTER_FILE, TRASH_DIR
+from constants import LOG_FILE, HIST_FILE, COUNTER_FILE, TRASH_DIR
 
 class Shell:
     """
