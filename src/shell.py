@@ -52,6 +52,7 @@ class Shell:
             "history": CmdHandlers.history,
             "undo": CmdHandlers.undo,
             "exit": CmdHandlers.exit_cmd,
+            "touch": CmdHandlers.touch
         }
 
     def _setup_logging(self):
@@ -302,7 +303,17 @@ class CmdHandlers:
         else:
             print("No action to undo")
         return None
-
+    @staticmethod
+    def touch(shell, args):
+        if not args:
+            raise ValueError("touch: missing file operand")
+        for arg in args:
+            file_path = shell.current_dir / arg
+            if file_path.exists():
+                os.utime(str(file_path))
+            else:
+                file_path.touch()
+        return None
     @staticmethod
     def exit_cmd(shell, args):
         raise SystemExit
