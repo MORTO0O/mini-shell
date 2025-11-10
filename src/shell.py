@@ -55,7 +55,8 @@ class Shell:
             "history": CmdHandlers.history,
             "undo": CmdHandlers.undo,
             "exit": CmdHandlers.exit_cmd,
-            "touch": CmdHandlers.touch
+            "touch": CmdHandlers.touch,
+            "mkdir": CmdHandlers.mkdir,
         }
 
     def _setup_logging(self):
