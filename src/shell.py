@@ -6,14 +6,18 @@ import sys
 import shlex
 import re
 import stat
+import zipfile
+import tarfile
 from datetime import datetime
 from functools import partial
 from .constants import LOG_FILE, HIST_FILE, COUNTER_FILE, TRASH_DIR
+
 
 class Shell:
     """
     Инициализация шелла.
     """
+
     def __init__(self):
         self.current_dir = pathlib.Path.cwd()
         self.trash_dir = pathlib.Path.home() / TRASH_DIR
@@ -57,18 +61,25 @@ class Shell:
             "exit": CmdHandlers.exit_cmd,
             "touch": CmdHandlers.touch,
             "mkdir": CmdHandlers.mkdir,
+            "zip": CmdHandlers.zip_cmd,
+            "tar": CmdHandlers.tar_cmd,
         }
 
     def _setup_logging(self):
         """
-         Логгирование в файл.
+        Логгирование в файл (перенастраивается при каждом запуске).
         """
+        logging.shutdown()
+        for handler in logging.root.handlers[:]:
+            logging.root.removeHandler(handler)
         logging.basicConfig(
             filename=self.log_file,
             level=logging.INFO,
             format="[%(asctime)s] %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
+            force=True,
         )
+        logging.info(f"Logging started -> {self.log_file}")
 
     def run(self):
         """
@@ -108,12 +119,21 @@ class Shell:
                 print(f"Error: {str(e)}", file=sys.stderr)
                 logging.error(f"ERROR: {str(e)}")
 
+
 class CmdHandlers:
     @staticmethod
+    def _resolve_path(shell, path_str):
+        """
+        Вспомогательный метод для разрешения путей (абсолютных и относительных).
+        Позволяет корректно работать с '..', '~' и подпапками.
+        """
+        path = pathlib.Path(path_str).expanduser()
+        if not path.is_absolute():
+            path = (shell.current_dir / path).resolve()
+        return path
+
+    @staticmethod
     def ls(shell, args):
-        """
-        Вывод списка всех файлов и директорий в текущей/указанной директории.
-        """
         long_format = False
         target_args = []
         for a in args:
@@ -148,9 +168,6 @@ class CmdHandlers:
 
     @staticmethod
     def cd(shell, args):
-        """
-        Переход из текущей директории в указанную.
-        """
         if not args:
             new_dir = pathlib.Path.home()
         else:
@@ -170,9 +187,6 @@ class CmdHandlers:
 
     @staticmethod
     def cat(shell, args):
-        """
-        Вывод содержимого файла.
-        """
         if not args:
             raise ValueError("cat: missing file operand")
         file_path = shell.current_dir / args[0]
@@ -185,38 +199,53 @@ class CmdHandlers:
     @staticmethod
     def cp(shell, args):
         """
-        Копирование файла или директории (поддержка рекурсивного копирования).
+        Копирование файла или директории.
+        Поддерживает -r, абсолютные и относительные пути (включая копирование "вверх" через ..).
         """
         recursive = False
         if args and args[0] == "-r":
             recursive = True
             args = args[1:]
+
         if len(args) != 2:
             raise ValueError("cp: missing source or destination")
-        src = shell.current_dir / args[0]
-        dst = shell.current_dir / args[1]
+
+        # Используем helper для разрешения путей "вверх/вниз"
+        src = CmdHandlers._resolve_path(shell, args[0])
+        dst = CmdHandlers._resolve_path(shell, args[1])
+
         if not src.exists():
             raise FileNotFoundError(f"cp: cannot stat '{args[0]}': No such file or directory")
-        if dst.exists():
-            raise FileExistsError(f"cp: destination '{args[1]}' exists")
+
+        # Если dst - папка, копируем внутрь неё
+        if dst.exists() and dst.is_dir():
+            dst = dst / src.name
+
         if src.is_dir() and not recursive:
             raise IsADirectoryError("cp: -r not specified; omitting directory")
-        if recursive:
+
+        if dst.exists():
+            # Простая защита от копирования самого в себя, хотя shutil обычно это ловит
+            if src == dst:
+                raise shutil.SameFileError(f"'{src}' and '{dst}' are the same file")
+            raise FileExistsError(f"cp: destination '{dst}' exists")
+
+        if src.is_dir():
             shutil.copytree(src, dst)
+            shell.last_undo = partial(shutil.rmtree, dst)
         else:
             shutil.copy2(src, dst)
-        shell.last_undo = partial(shutil.rmtree if dst.is_dir() else os.remove, dst)
+            shell.last_undo = partial(os.remove, dst)
         return None
 
     @staticmethod
     def mv(shell, args):
-        """
-        Перемещение или переименовывает файл/директорию.
-        """
         if len(args) != 2:
             raise ValueError("mv: missing source or destination")
-        src = shell.current_dir / args[0]
-        dst = shell.current_dir / args[1]
+
+        src = CmdHandlers._resolve_path(shell, args[0])
+        dst = CmdHandlers._resolve_path(shell, args[1])
+
         if not src.exists():
             raise FileNotFoundError(f"mv: cannot stat '{args[0]}': No such file or directory")
         if dst.exists() and dst.is_dir():
@@ -225,15 +254,14 @@ class CmdHandlers:
             final_dst = dst
         if final_dst.exists():
             raise FileExistsError(f"mv: destination '{final_dst}' exists")
+
         shutil.move(src, final_dst)
+        # Undo для move сложнее (нужно вернуть обратно), упрощенно:
         shell.last_undo = partial(shutil.move, final_dst, src)
         return None
 
     @staticmethod
     def rm(shell, args):
-        """
-        Удаление файла или директории (поддержка рекурсивного удаления).
-        """
         recursive = False
         if args and args[0] == "-r":
             recursive = True
@@ -266,9 +294,6 @@ class CmdHandlers:
 
     @staticmethod
     def grep(shell, args):
-        """
-        Поиск строк по шаблону в файле.
-        """
         recursive = False
         ignore_case = False
         while args and args[0].startswith("-"):
@@ -285,6 +310,7 @@ class CmdHandlers:
             raise FileNotFoundError(f"grep: {args[1]} no such file or directory")
         flags = re.IGNORECASE if ignore_case else 0
         regex = re.compile(pattern, flags)
+
         def search_file(f):
             try:
                 content = f.read_text(encoding="utf-8")
@@ -294,6 +320,7 @@ class CmdHandlers:
                 if regex.search(line):
                     rel_f = f.relative_to(shell.current_dir)
                     print(f"{rel_f}:{lnum}:{line}")
+
         if path.is_file():
             search_file(path)
         elif path.is_dir():
@@ -309,9 +336,6 @@ class CmdHandlers:
 
     @staticmethod
     def history(shell, args):
-        """
-        Выводит истории последних команд. Если аргумент --clear, очищает историю.
-        """
         if args and args[0] == "--clear":
             if shell.hist_file.exists():
                 open(shell.hist_file, "w").close()
@@ -333,9 +357,6 @@ class CmdHandlers:
 
     @staticmethod
     def undo(shell, args):
-        """
-        Отменяет последнюю операцию cp, mv, rm или touch.
-        """
         if shell.last_undo:
             shell.last_undo()
             if shell.hist_file.exists():
@@ -352,9 +373,6 @@ class CmdHandlers:
 
     @staticmethod
     def touch(shell, args):
-        """
-        Создание файла.
-        """
         if not args:
             raise ValueError("touch: missing file operand")
         for arg in args:
@@ -367,9 +385,6 @@ class CmdHandlers:
 
     @staticmethod
     def mkdir(shell, args):
-        """
-        Создает новой директории.
-        """
         if not args:
             raise ValueError("mkdir: missing operand")
         for arg in args:
@@ -382,8 +397,72 @@ class CmdHandlers:
         return None
 
     @staticmethod
+    def zip_cmd(shell, args):
+        """
+        Создание zip архива. Использование: zip <имя_архива> <цель>
+        """
+        if len(args) != 2:
+            raise ValueError("zip: usage: zip <archive_name> <file_or_dir>")
+
+        zip_name = args[0]
+        if not zip_name.endswith(".zip"):
+            zip_name += ".zip"
+
+        zip_path = CmdHandlers._resolve_path(shell, zip_name)
+        target_path = CmdHandlers._resolve_path(shell, args[1])
+
+        if not target_path.exists():
+            raise FileNotFoundError(f"zip: {args[1]}: No such file or directory")
+
+        if zip_path.exists():
+            raise FileExistsError(f"zip: archive '{zip_name}' already exists")
+
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            if target_path.is_file():
+                zf.write(target_path, arcname=target_path.name)
+            else:
+                for root, _, files in os.walk(target_path):
+                    for file in files:
+                        abs_file = pathlib.Path(root) / file
+                        # Сохраняем структуру папок внутри архива относительно target_path
+                        rel_path = abs_file.relative_to(target_path.parent)
+                        zf.write(abs_file, arcname=str(rel_path))
+
+        shell.last_undo = partial(os.remove, zip_path)
+        return None
+
+    @staticmethod
+    def tar_cmd(shell, args):
+        """
+        Создание tar архива. Использование: tar <имя_архива> <цель>
+        """
+        if len(args) != 2:
+            raise ValueError("tar: usage: tar <archive_name> <file_or_dir>")
+
+        tar_name = args[0]
+        # Простая проверка, хочет ли пользователь сжатие
+        mode = "w"
+        if tar_name.endswith(".tar.gz") or tar_name.endswith(".tgz"):
+            mode = "w:gz"
+        elif not tar_name.endswith(".tar"):
+            tar_name += ".tar"
+
+        tar_path = CmdHandlers._resolve_path(shell, tar_name)
+        target_path = CmdHandlers._resolve_path(shell, args[1])
+
+        if not target_path.exists():
+            raise FileNotFoundError(f"tar: {args[1]}: No such file or directory")
+
+        if tar_path.exists():
+            raise FileExistsError(f"tar: archive '{tar_name}' already exists")
+
+        with tarfile.open(tar_path, mode) as tf:
+            # arcname=... позволяет сохранить чистое имя файла/папки без полного пути
+            tf.add(target_path, arcname=target_path.name)
+
+        shell.last_undo = partial(os.remove, tar_path)
+        return None
+
+    @staticmethod
     def exit_cmd(shell, args):
-        """
-        Завершает работу шелла.
-        """
         raise SystemExit
